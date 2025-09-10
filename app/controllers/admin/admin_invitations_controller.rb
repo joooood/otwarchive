@@ -1,4 +1,6 @@
 class Admin::AdminInvitationsController < Admin::BaseController
+  before_action -> { authorize AdminInvitation, :can_invite_from_queue? }, only: [:invite_from_queue]
+  before_action -> { authorize AdminInvitation, :can_grant_invites? }, only: [:grant_invites_to_users]
 
   def index
   end

@@ -358,6 +358,15 @@ class WorksController < ApplicationController
 
   # PUT /works/1
   def update
+    service = Work::Update.call(
+      work: @work,
+      params: work_params,
+    )
+    result = service[:result]
+    if service.success?
+    else
+    end
+
     @work.preview_mode = !!(params[:preview_button] || params[:edit_button])
     @work.attributes = work_params
     @chapter.attributes = work_params[:chapter_attributes] if work_params[:chapter_attributes]

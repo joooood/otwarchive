@@ -1,12 +1,13 @@
 class Work < ApplicationRecord
+  #
+  include Creatable
   include Filterable
-  include CreationNotifier
+  include Searchable
   include Collectible
   include Bookmarkable
-  include Searchable
+  include CreationNotifier
   include BookmarkCountCaching
   include WorkChapterCountCaching
-  include Creatable
 
   ########################################################################
   # ASSOCIATIONS
@@ -41,7 +42,7 @@ class Work < ApplicationRecord
   accepts_nested_attributes_for :challenge_claims
 
   acts_as_commentable
-  has_many :total_comments, class_name: 'Comment', through: :chapters
+  has_many :total_comments, class_name: "Comment", through: :chapters
   has_many :kudos, as: :commentable, dependent: :destroy
 
   has_many :original_creators, class_name: "WorkOriginalCreator", dependent: :destroy
@@ -49,18 +50,22 @@ class Work < ApplicationRecord
   belongs_to :language
   belongs_to :work_skin
   validate :work_skin_allowed, on: :save
+
   def work_skin_allowed
     unless self.users.include?(self.work_skin.author) || (self.work_skin.public? && self.work_skin.official?)
       errors.add(:base, ts("You do not have permission to use that custom work stylesheet."))
     end
   end
+
   # statistics
   has_one :stat_counter, dependent: :destroy
   after_create :create_stat_counter
+
   def create_stat_counter
     counter = self.build_stat_counter
     counter.save
   end
+
   # moderation
   has_one :moderated_work, dependent: :destroy
 
@@ -149,6 +154,7 @@ class Work < ApplicationRecord
             presence: { message: "^Please choose a rating." }
 
   validate :only_one_rating
+
   def only_one_rating
     return unless split_tag_string(rating_string).count > 1
 
@@ -157,6 +163,7 @@ class Work < ApplicationRecord
 
   # rephrases the "chapters is invalid" message
   after_validation :check_for_invalid_chapters
+
   def check_for_invalid_chapters
     if self.errors[:chapters].any?
       self.errors.add(:base, ts("Please enter your story in the text field below."))
@@ -192,6 +199,7 @@ class Work < ApplicationRecord
   end
 
   validate :new_recipients_have_not_blocked_gift_giver
+
   def new_recipients_have_not_blocked_gift_giver
     return if self.new_gifts.blank?
 
@@ -219,7 +227,7 @@ class Work < ApplicationRecord
   enum :comment_permissions, {
     enable_all: 0,
     disable_anon: 1,
-    disable_all: 2
+    disable_all: 2,
   }, suffix: :comments, default: 1
 
   ########################################################################
@@ -248,6 +256,7 @@ class Work < ApplicationRecord
   after_save :notify_recipients, :expire_caches, :update_pseud_and_collection_indexes, :update_tag_index, :touch_series, :touch_related_works
 
   before_destroy :send_deleted_work_notification, prepend: true
+
   def send_deleted_work_notification
     return unless self.posted? && users.present?
 
@@ -338,21 +347,20 @@ class Work < ApplicationRecord
   # When works are done being reindexed, expire the appropriate caches
   def self.successful_reindex(ids)
     CacheMaster.expire_caches(ids)
-    tag_ids = FilterTagging.where(filterable_id: ids, filterable_type: 'Work').
-                            group(:filter_id).
-                            pluck(:filter_id)
+    tag_ids = FilterTagging.where(filterable_id: ids, filterable_type: "Work").
+      group(:filter_id).
+      pluck(:filter_id)
 
-    collection_ids = CollectionItem.where(item_id: ids, item_type: 'Work').
-                                    group(:collection_id).
-                                    pluck(:collection_id)
+    collection_ids = CollectionItem.where(item_id: ids, item_type: "Work").
+      group(:collection_id).
+      pluck(:collection_id)
 
     pseuds = Pseud.select("pseuds.id, pseuds.user_id").
-                    joins(:creatorships).
-                    where(creatorships: {
-                      creation_id: ids,
-                      creation_type: 'Work'
-                      }
-                    )
+      joins(:creatorships).
+      where(creatorships: {
+              creation_id: ids,
+              creation_type: "Work",
+            })
 
     pseuds.each { |p| p.update_works_index_timestamp! }
     User.expire_ids(pseuds.map(&:user_id).uniq)
@@ -365,13 +373,15 @@ class Work < ApplicationRecord
   end
 
   after_destroy :destroy_chapters_in_reverse
+
   def destroy_chapters_in_reverse
     chapters.sort_by(&:position).reverse.each(&:destroy)
   end
 
   after_destroy :clean_up_assignments
+
   def clean_up_assignments
-    self.challenge_assignments.each {|a| a.creation = nil; a.save!}
+    self.challenge_assignments.each { |a| a.creation = nil; a.save! }
   end
 
   ########################################################################
@@ -513,7 +523,7 @@ class Work < ApplicationRecord
     new_gifts = []
     gifts = [] # rebuild the list of associated gifts using the new list of names
     # add back in the rejected gift recips; we don't let users delete rejected gifts in order to prevent regifting
-    recip_names = recipient_names.split(',') + self.gifts.are_rejected.collect(&:recipient)
+    recip_names = recipient_names.split(",") + self.gifts.are_rejected.collect(&:recipient)
     recip_names.uniq.each do |name|
       name.strip!
       gift = self.gifts.for_name_or_byline(name).first
@@ -569,7 +579,7 @@ class Work < ApplicationRecord
     end
   end
 
-  def unrevealed?(user=User.current_user)
+  def unrevealed?(user = User.current_user)
     # eventually here is where we check if it's in a challenge that hasn't been made public yet
     #!self.collection_items.unrevealed.empty?
     in_unrevealed_collection?
@@ -582,6 +592,7 @@ class Work < ApplicationRecord
   end
 
   before_update :bust_anon_caching
+
   def bust_anon_caching
     if in_anon_collection_changed?
       async(:poke_cached_creator_comments)
@@ -597,8 +608,8 @@ class Work < ApplicationRecord
   # VERSIONS & REVISION DATES
   ########################################################################
 
-  def set_revised_at(date=nil)
-    date ||= self.chapters.where(posted: true).maximum('published_at') ||
+  def set_revised_at(date = nil)
+    date ||= self.chapters.where(posted: true).maximum("published_at") ||
              self.revised_at || self.created_at || Time.current
 
     if date.instance_of?(Date)
@@ -629,7 +640,7 @@ class Work < ApplicationRecord
       self.set_revised_at(Time.current) # a new chapter is being posted, so most recent update is now
     else
       # Calculate the most recent chapter publication date:
-      max_date = self.chapters.where('id != ? AND posted = 1', chapter.id).maximum('published_at')
+      max_date = self.chapters.where("id != ? AND posted = 1", chapter.id).maximum("published_at")
       max_date = max_date.nil? ? chapter.published_at : [max_date, chapter.published_at].max
 
       # Update revised_at to match the chapter publication date unless the
@@ -697,7 +708,7 @@ class Work < ApplicationRecord
   # Make sure the series restriction level is in line with its works
   def adjust_series_restriction
     unless self.series.blank?
-      self.series.each {|s| s.adjust_restricted }
+      self.series.each { |s| s.adjust_restricted }
     end
   end
 
@@ -772,11 +783,11 @@ class Work < ApplicationRecord
 
   def chapters_in_order(include_drafts: false, include_content: true)
     # in order
-    chapters = self.chapters.order('position ASC')
+    chapters = self.chapters.order("position ASC")
     # only posted chapters unless specified
     chapters = chapters.where(posted: true) unless include_drafts
     # when doing navigation pass false as contents are not needed
-    chapters = chapters.select('published_at, id, work_id, title, position, posted') unless include_content
+    chapters = chapters.select("published_at, id, work_id, title, position, posted") unless include_content
     chapters
   end
 
@@ -785,18 +796,18 @@ class Work < ApplicationRecord
     if self.new_record?
       self.chapters.first || self.chapters.build
     else
-      self.chapters.order('position ASC').first
+      self.chapters.order("position ASC").first
     end
   end
 
   # Gets the current last chapter
   def last_chapter
-    self.chapters.order('position DESC').first
+    self.chapters.order("position DESC").first
   end
 
   # Gets the current last posted chapter
   def last_posted_chapter
-    self.chapters.posted.order('position DESC').first
+    self.chapters.posted.order("position DESC").first
   end
 
   # Returns true if a work has or will have more than one chapter
@@ -842,10 +853,10 @@ class Work < ApplicationRecord
       # AO3-3498: For posted works, the word count is visible to people other than the creator and
       # should only include posted chapters. For drafts, we can count everything.
       self.word_count = if self.posted
-                          Chapter.select("SUM(word_count) AS work_word_count").where(work_id: self.id, posted: true).first.work_word_count
-                        else
-                          Chapter.select("SUM(word_count) AS work_word_count").where(work_id: self.id).first.work_word_count
-                        end
+          Chapter.select("SUM(word_count) AS work_word_count").where(work_id: self.id, posted: true).first.work_word_count
+        else
+          Chapter.select("SUM(word_count) AS work_word_count").where(work_id: self.id).first.work_word_count
+        end
     end
   end
 
@@ -916,8 +927,8 @@ class Work < ApplicationRecord
   # Gets all comments for all chapters in the work
   def find_all_comments
     Comment.where(
-      parent_type: 'Chapter',
-      parent_id: self.chapters.pluck(:id)
+      parent_type: "Chapter",
+      parent_id: self.chapters.pluck(:id),
     )
   end
 
@@ -938,8 +949,8 @@ class Work < ApplicationRecord
   # returns the top-level comments for all chapters in the work
   def comments
     Comment.where(
-      commentable_type: 'Chapter',
-      commentable_id: self.chapters.pluck(:id)
+      commentable_type: "Chapter",
+      commentable_id: self.chapters.pluck(:id),
     )
   end
 
@@ -966,7 +977,7 @@ class Work < ApplicationRecord
     counter.update(
       kudos_count: self.kudos.count,
       comments_count: self.count_visible_comments_uncached,
-      bookmarks_count: self.bookmarks.where(private: false).count
+      bookmarks_count: self.bookmarks.where(private: false).count,
     )
   end
 
@@ -1012,7 +1023,7 @@ class Work < ApplicationRecord
   scope :posted, -> { where(posted: true) }
   scope :unposted, -> { where(posted: false) }
   scope :not_spam, -> { where(spam: false) }
-  scope :restricted , -> { where(restricted: true) }
+  scope :restricted, -> { where(restricted: true) }
   scope :unrestricted, -> { where(restricted: false) }
   scope :hidden, -> { where(hidden_by_admin: true) }
   scope :unhidden, -> { where(hidden_by_admin: false) }
@@ -1027,10 +1038,12 @@ class Work < ApplicationRecord
   scope :non_anon, -> { where(in_anon_collection: false) }
   scope :unrevealed, -> { where(in_unrevealed_collection: true) }
   scope :revealed, -> { where(in_unrevealed_collection: false) }
-  scope :latest, -> { visible_to_all.
-                      revealed.
-                      order("revised_at DESC").
-                      limit(ArchiveConfig.ITEMS_PER_PAGE) }
+  scope :latest, -> {
+          visible_to_all.
+            revealed.
+            order("revised_at DESC").
+            limit(ArchiveConfig.ITEMS_PER_PAGE)
+        }
 
   # a complicated dynamic scope here:
   # if the user is an Admin, we use the "visible_to_admin" scope
@@ -1038,30 +1051,30 @@ class Work < ApplicationRecord
   # otherwise, we use a join to get userids and then get all posted works that are either unhidden OR belong to this user.
   # Note: in that last case we have to use select("DISTINCT works.") because of cases where the same user appears twice
   # on a work.
-  def self.visible_to_user(user=User.current_user)
+  def self.visible_to_user(user = User.current_user)
     case user.class.to_s
-    when 'Admin'
+    when "Admin"
       visible_to_admin
-    when 'User'
+    when "User"
       select("DISTINCT works.*").
-      posted.
-      joins({pseuds: :user}).
-      where("works.hidden_by_admin = false OR users.id = ?", user.id)
+        posted.
+        joins({ pseuds: :user }).
+        where("works.hidden_by_admin = false OR users.id = ?", user.id)
     else
       visible_to_all
     end
   end
 
   # Use the current user to determine what works are visible
-  def self.visible(user=User.current_user)
+  def self.visible(user = User.current_user)
     visible_to_user(user)
   end
 
-  scope :owned_by, lambda {|user| select("DISTINCT works.*").joins({pseuds: :user}).where('users.id = ?', user.id)}
+  scope :owned_by, lambda { |user| select("DISTINCT works.*").joins({ pseuds: :user }).where("users.id = ?", user.id) }
 
   def self.in_series(series)
     joins(:series).
-    where("series.id = ?", series.id)
+      where("series.id = ?", series.id)
   end
 
   scope :with_columns_for_blurb, lambda {
@@ -1087,12 +1100,12 @@ class Work < ApplicationRecord
     if self.anonymous?
       "Anonymous"
     else
-      self.pseuds.sort.map(&:name).join(",  ").downcase.gsub(SORTED_AUTHOR_REGEX, '')
+      self.pseuds.sort.map(&:name).join(",  ").downcase.gsub(SORTED_AUTHOR_REGEX, "")
     end
   end
 
   def sorted_title
-    sorted_title = self.title.downcase.gsub(/^["'\.\/]/, '')
+    sorted_title = self.title.downcase.gsub(/^["'\.\/]/, "")
     sorted_title = sorted_title.gsub(/^(an?) (.*)/, '\2, \1')
     sorted_title = sorted_title.gsub(/^the (.*)/, '\1, the')
     sorted_title = sorted_title.rjust(5, "0") if sorted_title.match(/^\d/)
@@ -1121,7 +1134,7 @@ class Work < ApplicationRecord
       blog_lang: language.short,
       comment_author: user.login,
       comment_author_email: user.email,
-      comment_content: content
+      comment_content: content,
     }
   end
 
@@ -1200,21 +1213,21 @@ class Work < ApplicationRecord
       root: false,
       only: [
         :title, :summary, :hidden_by_admin, :restricted, :posted,
-        :created_at, :revised_at, :word_count, :complete
+        :created_at, :revised_at, :word_count, :complete,
       ],
       methods: [
         :tag, :filter_ids, :rating_ids, :archive_warning_ids, :category_ids,
         :fandom_ids, :character_ids, :relationship_ids, :freeform_ids,
-        :creators, :collection_ids, :work_types
-      ]
+        :creators, :collection_ids, :work_types,
+      ],
     ).merge(
       language_id: language&.short,
       anonymous: anonymous?,
       unrevealed: unrevealed?,
       pseud_ids: anonymous? || unrevealed? ? nil : pseud_ids,
       user_ids: anonymous? || unrevealed? ? nil : user_ids,
-      bookmarkable_type: 'Work',
-      bookmarkable_join: { name: "bookmarkable" }
+      bookmarkable_type: "Work",
+      bookmarkable_join: { name: "bookmarkable" },
     )
   end
 

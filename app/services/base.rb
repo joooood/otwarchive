@@ -1,15 +1,21 @@
 class AO3::Service
   attr_reader :result, :errors
 
-  def initialize(*args)
-    @args = args
+  def initialize(**kwargs)
+    @kwargs = kwargs
     @result = nil
     @errors = []
   end
 
   def call
     @result = perform
-    success?
+    self
+  end
+
+  def self.call(**kwargs)
+    service = new(**kwargs)
+    service.call
+    service
   end
 
   def perform
@@ -24,7 +30,7 @@ class AO3::Service
     !success?
   end
 
-  def add_errors(message)
+  def add_error(message)
     errors << message
   end
 end
